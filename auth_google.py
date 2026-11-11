@@ -53,8 +53,13 @@ def manual_flow(settings: Settings, code: str | None) -> Credentials:
     The Desktop client type accepts any http://localhost redirect, so the browser will fail
     to load the redirect page. Copy the `code` query parameter from that URL.
     """
+    # No PKCE: the URL is printed in one process and the code exchanged in another, so a
+    # per-process code verifier would be lost. Desktop clients authenticate with the secret.
     flow = InstalledAppFlow.from_client_secrets_file(
-        str(settings.credentials_path), SCOPES, redirect_uri="http://localhost:1"
+        str(settings.credentials_path),
+        SCOPES,
+        redirect_uri="http://localhost:1",
+        autogenerate_code_verifier=False,
     )
     if not code:
         url, _ = flow.authorization_url(access_type="offline", prompt="consent")
