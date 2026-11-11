@@ -10,6 +10,8 @@ GOOGLE_TOKEN_PATH when set.
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 
 from dotenv import load_dotenv
@@ -23,7 +25,18 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
 def load_credentials(settings: Settings, interactive: bool = False) -> Credentials:
+    """Load the owner's OAuth token.
+
+    Order: GOOGLE_TOKEN_JSON env var (the contents of token.json, for hosted deployments
+    where files are awkward), then token_path on disk. Refreshes when expired.
+    """
     creds: Credentials | None = None
+    token_env = os.environ.get("GOOGLE_TOKEN_JSON")
+    if token_env:
+        creds = Credentials.from_authorized_user_info(json.loads(token_env), SCOPES)
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        return creds
     if settings.token_path.exists():
         creds = Credentials.from_authorized_user_file(str(settings.token_path), SCOPES)
     if creds and creds.valid:
