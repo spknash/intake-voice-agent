@@ -47,10 +47,40 @@ def load_credentials(settings: Settings, interactive: bool = False) -> Credentia
     return creds
 
 
+def manual_flow(settings: Settings, code: str | None) -> Credentials:
+    """Headless variant: print the consent URL, then exchange a pasted code.
+
+    The Desktop client type accepts any http://localhost redirect, so the browser will fail
+    to load the redirect page. Copy the `code` query parameter from that URL.
+    """
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(settings.credentials_path), SCOPES, redirect_uri="http://localhost:1"
+    )
+    if not code:
+        url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+        print("Open this URL, approve, then re-run with --code <code from the redirect URL>:\n")
+        print(url)
+        raise SystemExit(2)
+    flow.fetch_token(code=code.strip())
+    creds = flow.credentials
+    settings.token_path.write_text(creds.to_json())
+    return creds
+
+
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manual", action="store_true", help="print a URL instead of opening a browser")
+    parser.add_argument("--code", help="authorization code from the redirect URL (with --manual)")
+    args = parser.parse_args()
+
     load_dotenv()
     settings = Settings.from_env()
-    creds = load_credentials(settings, interactive=True)
+    if args.manual or args.code:
+        creds = manual_flow(settings, args.code)
+    else:
+        creds = load_credentials(settings, interactive=True)
     print(f"Wrote {settings.token_path}. Scopes: {', '.join(creds.scopes or SCOPES)}")
     return 0
 
