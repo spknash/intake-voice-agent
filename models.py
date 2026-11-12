@@ -24,7 +24,8 @@ def build(settings: Settings, backend_instructions: str) -> llm.DuplexModel | ll
             # We leave responses_options["model"] unset so OpenAI's default backend applies.
             responses_options={
                 "instructions": backend_instructions,
-                "reasoning": {"effort": "medium"},
+                # low keeps the backend's turn latency down; the flow is simple
+                "reasoning": {"effort": "low"},
                 "text": {"verbosity": "low"},
             },
             # Recycle the websocket well before the 8-minute call cap would otherwise
