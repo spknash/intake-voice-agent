@@ -10,6 +10,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY --chown=appuser:appuser . .
+RUN mkdir -p /app/traces && chown appuser:appuser /app /app/traces
 USER appuser
 
 # Download Silero VAD weights at build time so cold starts are fast.

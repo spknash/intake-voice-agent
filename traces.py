@@ -7,6 +7,7 @@ The 7-day booking limit is answered from these files so there is no database yet
 from __future__ import annotations
 
 import json
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,18 +21,32 @@ def _safe(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)[:80]
 
 
+def _writable_dir(preferred: Path) -> Path:
+    """Return preferred if it can be created, else a temp fallback (read-only containers)."""
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        probe = preferred / ".write-test"
+        probe.touch()
+        probe.unlink()
+        return preferred
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "intake-traces"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
 def write_trace(settings: Settings, room: str, payload: dict[str, Any]) -> Path:
-    settings.traces_dir.mkdir(parents=True, exist_ok=True)
+    directory = _writable_dir(settings.traces_dir)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = settings.traces_dir / f"{stamp}_{_safe(room)}.json"
+    path = directory / f"{stamp}_{_safe(room)}.json"
     path.write_text(json.dumps(payload, indent=2, default=str))
     return path
 
 
 def append_request(settings: Settings, record: dict[str, Any]) -> None:
-    settings.traces_dir.mkdir(parents=True, exist_ok=True)
+    directory = _writable_dir(settings.traces_dir)
     record = {"logged_at": datetime.now(timezone.utc).isoformat(), **record}
-    with (settings.traces_dir / REQUESTS_FILE).open("a") as f:
+    with (directory / REQUESTS_FILE).open("a") as f:
         f.write(json.dumps(record, default=str) + "\n")
 
 

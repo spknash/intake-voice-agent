@@ -8,6 +8,7 @@ Production:    python agent.py start
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from livekit.agents import (
     AgentServer,
     AgentSession,
     JobContext,
+    JobProcess,
     RunContext,
     ToolError,
     cli,
@@ -41,16 +43,12 @@ logger = logging.getLogger("intake")
 settings = Settings.from_env()
 calendar = Calendar(settings)
 
-# Loaded once per process; AgentSession needs an explicit VAD so GPT-Live barge-in
-# actually cuts playback.
-_vad: silero.VAD | None = None
+def prewarm(proc: JobProcess) -> None:
+    """Runs once per worker process before any job, off the event loop.
 
-
-def _get_vad() -> silero.VAD:
-    global _vad
-    if _vad is None:
-        _vad = silero.VAD.load()
-    return _vad
+    AgentSession needs an explicit VAD so GPT-Live barge-in actually cuts playback.
+    """
+    proc.userdata["vad"] = silero.VAD.load()
 
 
 @dataclass
@@ -285,7 +283,7 @@ async def _enforce_max_duration(ctx: JobContext, session: AgentSession, state: C
         await ctx.delete_room()
 
 
-server = AgentServer()
+server = AgentServer(setup_fnc=prewarm)
 
 
 @server.rtc_session(agent_name="intake")
@@ -296,7 +294,12 @@ async def entrypoint(ctx: JobContext) -> None:
     if ctx.is_fake_job():
         caller_phone = "console"
     else:
-        participant = await ctx.wait_for_participant()
+        try:
+            participant = await ctx.wait_for_participant()
+        except RuntimeError as exc:
+            # room was deleted or the caller hung up before anyone joined
+            logger.info("no participant joined: %s", exc)
+            return
         caller_phone = normalize_phone(participant.attributes.get("sip.phoneNumber", "") or "")
 
     state = CallState(room=ctx.room.name, caller_phone=caller_phone, started_at=started)
@@ -325,8 +328,29 @@ async def entrypoint(ctx: JobContext) -> None:
                 payload["session_report"] = ctx.make_session_report(session).to_dict()
             except Exception as exc:  # report is best-effort
                 payload["session_report_error"] = str(exc)
-        path = traces.write_trace(settings, state.room, payload)
-        logger.info("trace written", extra={"path": str(path), "outcome": state.outcome})
+        # Emit the compact summary first: hosted containers lose traces/ on restart, and
+        # stdout is what `lk agent logs` and the LiveKit Cloud dashboard keep.
+        logger.info(
+            "CALL_SUMMARY %s",
+            json.dumps(
+                {
+                    "room": state.room,
+                    "caller_phone": state.caller_phone,
+                    "outcome": state.outcome,
+                    "duration_s": round((datetime.now(timezone.utc) - state.started_at).total_seconds()),
+                    "event_id": state.event_id,
+                    "caller_name": state.name,
+                    "tools": [t["tool"] for t in state.tool_log],
+                    "transcript": _transcript(session),
+                },
+                default=str,
+            ),
+        )
+        try:
+            path = traces.write_trace(settings, state.room, payload)
+            logger.info("trace written", extra={"path": str(path), "outcome": state.outcome})
+        except Exception:
+            logger.exception("failed to write trace file")
 
     ctx.add_shutdown_callback(write_trace_on_shutdown)
 
@@ -350,9 +374,10 @@ async def entrypoint(ctx: JobContext) -> None:
         # single model: give it both layers
         voice = voice + "\n\n" + backend
 
+    vad = ctx.proc.userdata.get("vad") or silero.VAD.load()
     session = AgentSession(
         llm=models.build(settings, backend),
-        vad=_get_vad(),
+        vad=vad,
         user_away_timeout=45.0,
     )
 
@@ -370,6 +395,22 @@ async def entrypoint(ctx: JobContext) -> None:
 
 async def _cancel(task: asyncio.Task) -> None:
     task.cancel()
+
+
+def _transcript(session: AgentSession | None) -> list[dict[str, str]]:
+    """Role-tagged text of the conversation, for the stdout call summary."""
+    if session is None:
+        return []
+    out: list[dict[str, str]] = []
+    try:
+        for item in session.history.items:
+            if getattr(item, "type", None) == "message":
+                text = item.text_content or ""
+                if text.strip():
+                    out.append({"role": item.role, "text": text.strip()})
+    except Exception:  # best-effort
+        pass
+    return out
 
 
 if __name__ == "__main__":
