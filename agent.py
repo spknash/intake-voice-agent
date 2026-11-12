@@ -231,23 +231,24 @@ class IntakeAgent(Agent):
         context: RunContext,
         start_iso: str,
         name: str,
-        email: str,
         reason: str,
+        email: str | None = None,
         caller_timezone: str = "America/New_York",
         company: str | None = None,
         role: str | None = None,
         fun_answer: str | None = None,
     ) -> dict[str, Any]:
-        """Book the meeting on the owner's calendar and invite the caller.
+        """Book the meeting on the owner's calendar.
 
-        Only works with a start_iso that find_open_slots returned in this call and an email
-        that confirm_email has checked.
+        Only works with a start_iso that find_open_slots returned in this call. When an email is
+        given it must be one confirm_email has checked. Confirmation goes to the caller's phone
+        number when no email is given.
 
         Args:
             start_iso: The chosen slot's start_iso exactly as returned by find_open_slots.
             name: Caller's name.
-            email: The email address confirm_email returned, after the caller said yes.
             reason: What they want to talk about, one or two sentences.
+            email: The email address confirm_email returned, after the caller said yes. Omit when the flow does not collect email.
             caller_timezone: IANA timezone of the caller. Defaults to America/New_York.
             company: Caller's company, only if they mentioned it.
             role: Caller's role, only if they mentioned it.
@@ -263,8 +264,15 @@ class IntakeAgent(Agent):
         end = start + timedelta(minutes=settings.meeting_minutes)
 
         assert_offered(self.state, start)
-        assert_email_checked(self.state, email)
-        email = email.strip().lower()
+        has_phone = self.state.caller_phone.startswith("+")
+        if email:
+            assert_email_checked(self.state, email)
+            email = email.strip().lower()
+        elif settings.contact_mode != "phone" or not has_phone:
+            raise ToolError(
+                "An email is required for this booking. Ask the caller for their email and "
+                "call confirm_email first."
+            )
 
         who = f"{name} ({company})" if company else name
         extras = ""
@@ -274,7 +282,7 @@ class IntakeAgent(Agent):
             extras += f"\nIcebreaker: {settings.fun_question}\nAnswer: {fun_answer}\n"
         description = (
             f"Booked by phone intake agent.\n\n"
-            f"Name: {name}\nEmail: {email}\nPhone: {self.state.caller_phone or 'unknown'}\n"
+            f"Name: {name}\nEmail: {email or '-'}\nPhone: {self.state.caller_phone or 'unknown'}\n"
             f"{extras}\nReason for meeting:\n{reason}\n"
         )
 
@@ -285,7 +293,7 @@ class IntakeAgent(Agent):
                     name=name,
                     email=email,
                     tz=tz,
-                    phone=self.state.caller_phone if self.state.caller_phone.startswith("+") else None,
+                    phone=self.state.caller_phone if has_phone else None,
                     notes=description,
                     metadata={"source": "phone-intake-agent", "room": self.state.room},
                 )
@@ -332,8 +340,12 @@ class IntakeAgent(Agent):
             ),
             "meet_link": self.state.event_link,
             "note": (
-                "Tell the caller the invite with a video link is on its way to their email. "
-                "Then thank them warmly for calling, say the owner is looking forward to it, wish them "
+                (
+                    "Tell the caller a text with the meeting link is on its way to the number they called from. "
+                    if not email
+                    else "Tell the caller the invite with a video link is on its way to their email. "
+                )
+                + "Then thank them warmly for calling, say the owner is looking forward to it, wish them "
                 "a good day, and call end_call."
             ),
         }

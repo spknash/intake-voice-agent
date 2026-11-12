@@ -155,7 +155,7 @@ class Calendar:
         end: datetime,
         summary: str,
         description: str,
-        attendee_email: str,
+        attendee_email: str | None,
     ) -> dict:
         def _call() -> dict:
             body = {
@@ -163,10 +163,10 @@ class Calendar:
                 "description": description,
                 "start": {"dateTime": start.isoformat(), "timeZone": str(self.settings.owner_tz)},
                 "end": {"dateTime": end.isoformat(), "timeZone": str(self.settings.owner_tz)},
-                "attendees": [{"email": attendee_email}],
+                "attendees": [{"email": attendee_email}] if attendee_email else [],
                 "conferenceData": {
                     "createRequest": {
-                        "requestId": f"intake-{int(start.timestamp())}-{abs(hash(attendee_email)) % 10**6}",
+                        "requestId": f"intake-{int(start.timestamp())}-{abs(hash(attendee_email or summary)) % 10**6}",
                         "conferenceSolutionKey": {"type": "hangoutsMeet"},
                     }
                 },

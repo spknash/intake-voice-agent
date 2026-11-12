@@ -68,6 +68,20 @@ def backend_instructions(settings: Settings, today: datetime, caller_phone: str)
         else ""
     )
     n = 4 if settings.fun_question else 3
+    if settings.contact_mode == "phone":
+        email_step = (
+            f"{n + 1}. Do NOT ask for an email. The confirmation is texted to the number they are calling from. "
+            "If the caller volunteers an email and wants it emailed too, call confirm_email, read the spelled value back, get a yes, and pass it to book_meeting.\n"
+        )
+        confirm_line = "Tell them a text with the meeting link is on its way to the number they called from."
+        email_rule = "Never ask for an email unless book_meeting's error message tells you to."
+    else:
+        email_step = (
+            f'{n + 1}. Their email. Call confirm_email with what you heard. Read the "spelled" value back letter by letter and ask for a clear yes. '
+            "If corrected, call confirm_email again. At most two corrections; after that call log_request instead of booking.\n"
+        )
+        confirm_line = "Tell them the invite with a video link is on its way to their email."
+        email_rule = "book_meeting also rejects emails that confirm_email has not checked."
     return f"""You run the intake flow for booking a {settings.meeting_minutes}-minute intro meeting with {owner}.
 Today is {today.strftime('%A, %B %d, %Y')}, {tz} time ({settings.owner_tz}). The caller's phone is {caller_phone or 'unknown'}.
 {avail}
@@ -78,13 +92,12 @@ Collect, in this order, and keep track of what you have:
 1. What they want to talk with {owner} about. If vague, ask one follow-up for something specific. Do not ask a third time.
 2. Their name.
 {fun_step}{n}. When they are free. The moment the caller mentions any day or time, call find_open_slots for that range BEFORE saying anything about availability. If the caller's requested time is in the results, offer it. Otherwise offer two or three returned slots, each spoken with "{tz}" after the time. If nothing is returned, widen the range once, then call log_request and say {owner} will follow up.
-{n + 1}. Their email. Call confirm_email with what you heard. Read the "spelled" value back letter by letter and ask for a clear yes. If corrected, call confirm_email again. At most two corrections; after that call log_request instead of booking.
-{n + 2}. Restate the chosen time once, with the timezone, for example "Friday the thirteenth at three PM {tz}", then call book_meeting right away without asking another question.
-{n + 3}. Tell them the invite with a video link is on its way. Then close warmly in one or two sentences: thank them for calling, say {owner} is looking forward to it, and wish them a good day. Then call end_call.
+{email_step}{n + 2}. Restate the chosen time once, with the timezone, for example "Friday the thirteenth at three PM {tz}", then call book_meeting right away without asking another question.
+{n + 3}. {confirm_line} Then close warmly in one or two sentences: thank them for calling, say {owner} is looking forward to it, and wish them a good day. Then call end_call.
 
 Rules:
 - Only ever offer times returned by find_open_slots. The booking tool rejects anything else.
-- book_meeting also rejects emails that confirm_email has not checked.
+- {email_rule}
 - Do not ask for company or job title. If the caller mentions them, pass them along to book_meeting.
 - Never reveal other calendar events, even indirectly.
 - Decline off-topic requests and return to the flow.

@@ -78,6 +78,10 @@ class Settings:
     calcom_username: str = ""
     calcom_event_slug: str = "30min"
     calcom_api_key: str = ""
+    # How the caller receives the confirmation. "email": ask for and confirm an email on the
+    # call. "phone": never ask for email; book with the caller's number and rely on an SMS
+    # confirmation (a Cal.com workflow or another sender) to that number.
+    contact_mode: str = "email"
     # Persona
     voice: str = "marin"  # a GPT-Live built-in name or a custom "voice_..." id
     voice_style: str = ""  # optional plain-language description, repeated in instructions
@@ -95,6 +99,9 @@ class Settings:
             raise ValueError(f"BOOKING_BACKEND must be 'calcom' or 'google', got {backend!r}")
         if backend == "calcom" and not calcom_username:
             raise ValueError("BOOKING_BACKEND=calcom requires CALCOM_USERNAME")
+        contact_mode = e.get("CONTACT_MODE", "email").strip().lower()
+        if contact_mode not in {"email", "phone"}:
+            raise ValueError(f"CONTACT_MODE must be 'email' or 'phone', got {contact_mode!r}")
         return cls(
             owner_name=e.get("OWNER_NAME", "Suhaas"),
             owner_tz=ZoneInfo(e.get("OWNER_TZ", "America/New_York")),
@@ -117,6 +124,7 @@ class Settings:
             calcom_username=calcom_username,
             calcom_event_slug=e.get("CALCOM_EVENT_SLUG", "30min").strip(),
             calcom_api_key=e.get("CALCOM_API_KEY", "").strip(),
+            contact_mode=contact_mode,
             voice=e.get("VOICE", "marin").strip() or "marin",
             voice_style=e.get("VOICE_STYLE", "").strip(),
             fun_question=e.get("FUN_QUESTION", "").strip(),

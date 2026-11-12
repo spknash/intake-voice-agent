@@ -130,22 +130,27 @@ class Calcom:
         *,
         start: datetime,
         name: str,
-        email: str,
+        email: str | None,
         tz: ZoneInfo,
         phone: str | None,
         notes: str,
         metadata: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        """Create a booking. Email may be None only if the event type's email field is optional
+        and its phone field is required (Cal.com booking questions)."""
+        attendee: dict[str, Any] = {"name": name, "timeZone": str(tz), "language": "en"}
+        if email:
+            attendee["email"] = email
+        if phone and phone.startswith("+"):
+            attendee["phoneNumber"] = phone
         body: dict[str, Any] = {
             "start": start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "eventTypeSlug": self.s.calcom_event_slug,
             "username": self.s.calcom_username,
-            "attendee": {"name": name, "email": email, "timeZone": str(tz), "language": "en"},
+            "attendee": attendee,
             "bookingFieldsResponses": {"notes": notes},
             "metadata": {k: str(v)[:500] for k, v in (metadata or {}).items()},
         }
-        if phone and phone.startswith("+"):
-            body["attendee"]["phoneNumber"] = phone
         resp = await self._request("POST", "/bookings", BOOKINGS_VERSION, json=body)
         return resp.get("data", resp)
 
