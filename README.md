@@ -74,6 +74,30 @@ GPT-Live runs in `responses` delegation mode. The five tools in `agent.py` run i
    ```
    `GOOGLE_TOKEN_JSON` takes precedence over `GOOGLE_TOKEN_PATH` when set.
 
+## Availability source
+
+With `CALCOM_USERNAME` set, availability and booking go through the owner's public Cal.com
+event type (`CALCOM_EVENT_SLUG`, default `30min`). Cal.com applies its own schedule, buffers,
+limits and connected-calendar conflicts, sends the invites, and attaches the event type's
+video link. No API key is needed for a public event type. Without `CALCOM_USERNAME`, the
+agent falls back to the Google Calendar rules below. `book_meeting` only accepts times that
+`find_open_slots` returned in the same call, whichever backend is active.
+
+## Voice and persona
+
+- `VOICE`: a GPT-Live built-in (`marin`, `cedar`, `beacon`, `cinder`, `stone`, `vesper`) or a
+  custom `voice_...` id. Custom voices only work in `MODE=live`; the realtime fallback uses `marin`.
+- Create a prompt-designed voice (free, no consent recording) with one request:
+  ```bash
+  curl https://api.openai.com/v1/audio/voices -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"type":"prompt","name":"my-voice","model":"auto","prompt":"<describe the voice>"}'
+  ```
+  Cloning a real person's voice needs a consent recording and OpenAI approval.
+- `VOICE_STYLE`: optional description repeated in the instructions so delivery stays consistent.
+- `FUN_QUESTION`: optional icebreaker asked once after the caller's name. The answer is stored on
+  the booking.
+
 ## Configuration
 
 All in `.env`. Defaults in parentheses.

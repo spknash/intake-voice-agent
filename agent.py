@@ -33,6 +33,7 @@ from livekit.plugins import silero
 import models
 import prompts
 import traces
+from calcom import Calcom, CalcomError, meeting_url, select_slots
 from config import Settings, normalize_phone
 from emailcheck import check_email
 from gcal import Calendar, generate_slots, meet_link
@@ -42,6 +43,7 @@ logger = logging.getLogger("intake")
 
 settings = Settings.from_env()
 calendar = Calendar(settings)
+calcom = Calcom(settings) if settings.booking_backend == "calcom" else None
 
 def prewarm(proc: JobProcess) -> None:
     """Runs once per worker process before any job, off the event loop.
@@ -157,31 +159,51 @@ class IntakeAgent(Agent):
         if end < start:
             raise ToolError("end_date is before start_date.")
         now = datetime.now(timezone.utc)
-        window_start = datetime.combine(start, datetime.min.time(), tzinfo=settings.owner_tz)
-        window_end = datetime.combine(end, datetime.min.time(), tzinfo=settings.owner_tz) + timedelta(days=1)
-        try:
-            async with context.with_filler(
-                self._filler("One moment while I check the calendar."), delay=1.2, max_steps=1
-            ):
-                busy = await calendar.freebusy(window_start, window_end)
-        except Exception as exc:
-            logger.exception("freebusy failed")
-            raise ToolError("Calendar lookup failed.") from exc
-        slots = generate_slots(
-            settings=settings,
-            busy=busy,
-            now=now,
-            start_date=start,
-            end_date=end,
-            caller_tz=tz,
-            earliest_hour=earliest_hour,
-            latest_hour=latest_hour,
+        tz_spoken = prompts.spoken_tz(caller_timezone)
+        filler = context.with_filler(
+            self._filler("One sec, let me peek at the calendar."), delay=1.2, max_steps=1
         )
-        for s in slots:
-            self.state.offered_slots.add(_slot_key(s.start))
-        self.state.log("find_open_slots", start=start_date, end=end_date, tz=caller_timezone, n=len(slots))
+        try:
+            if calcom is not None:
+                async with filler:
+                    raw = await calcom.slots(start, end, tz)
+                picks = select_slots(
+                    raw,
+                    now=now,
+                    min_notice_hours=settings.min_notice_hours,
+                    caller_tz=tz,
+                    earliest_hour=earliest_hour,
+                    latest_hour=latest_hour,
+                    meeting_minutes=settings.meeting_minutes,
+                )
+                slot_dicts = [p.to_dict(tz, tz_spoken) for p in picks]
+                starts = [p.start for p in picks]
+            else:
+                window_start = datetime.combine(start, datetime.min.time(), tzinfo=settings.owner_tz)
+                window_end = datetime.combine(end, datetime.min.time(), tzinfo=settings.owner_tz) + timedelta(days=1)
+                async with filler:
+                    busy = await calendar.freebusy(window_start, window_end)
+                slots = generate_slots(
+                    settings=settings,
+                    busy=busy,
+                    now=now,
+                    start_date=start,
+                    end_date=end,
+                    caller_tz=tz,
+                    earliest_hour=earliest_hour,
+                    latest_hour=latest_hour,
+                )
+                slot_dicts = [{**s.to_dict(tz), "label": f"{s.to_dict(tz)['label']} {tz_spoken}"} for s in slots]
+                starts = [s.start for s in slots]
+        except Exception as exc:
+            logger.exception("availability lookup failed")
+            raise ToolError("Calendar lookup failed.") from exc
+        for st in starts:
+            self.state.offered_slots.add(_slot_key(st))
+        self.state.log("find_open_slots", start=start_date, end=end_date, tz=caller_timezone, n=len(starts))
+        slots = starts
         return {
-            "slots": [s.to_dict(tz) for s in slots],
+            "slots": slot_dicts,
             "note": (
                 "Offer the caller's requested time if it is here, else two or three of these. "
                 "Speak labels as given and add the timezone name after each time."
@@ -214,6 +236,7 @@ class IntakeAgent(Agent):
         caller_timezone: str = "America/New_York",
         company: str | None = None,
         role: str | None = None,
+        fun_answer: str | None = None,
     ) -> dict[str, Any]:
         """Book the meeting on the owner's calendar and invite the caller.
 
@@ -228,6 +251,7 @@ class IntakeAgent(Agent):
             caller_timezone: IANA timezone of the caller. Defaults to America/New_York.
             company: Caller's company, only if they mentioned it.
             role: Caller's role, only if they mentioned it.
+            fun_answer: The caller's answer to the icebreaker question, if one was asked.
         """
         tz = _tz(caller_timezone)
         try:
@@ -242,33 +266,61 @@ class IntakeAgent(Agent):
         assert_email_checked(self.state, email)
         email = email.strip().lower()
 
-        if not await calendar.is_free(start, end):
-            self.state.log("book_meeting", result="slot_taken", start=start_iso)
-            raise ToolError("That time was just taken. Call find_open_slots again and offer new options.")
-
         who = f"{name} ({company})" if company else name
+        extras = ""
+        if company or role:
+            extras += f"Company: {company or '-'}\nRole: {role or '-'}\n"
+        if fun_answer and settings.fun_question:
+            extras += f"\nIcebreaker: {settings.fun_question}\nAnswer: {fun_answer}\n"
         description = (
             f"Booked by phone intake agent.\n\n"
-            f"Name: {name}\nCompany: {company or '-'}\nRole: {role or '-'}\nEmail: {email}\n"
-            f"Phone: {self.state.caller_phone or 'unknown'}\n\n"
-            f"Reason for meeting:\n{reason}\n"
+            f"Name: {name}\nEmail: {email}\nPhone: {self.state.caller_phone or 'unknown'}\n"
+            f"{extras}\nReason for meeting:\n{reason}\n"
         )
-        try:
-            event = await calendar.create_event(
-                start=start,
-                end=end,
-                summary=f"Intro: {who}",
-                description=description,
-                attendee_email=email,
-            )
-        except Exception as exc:
-            logger.exception("events.insert failed")
-            self.state.log("book_meeting", result="error", error=str(exc))
-            raise ToolError("Booking failed.") from exc
+
+        if calcom is not None:
+            try:
+                booking = await calcom.book(
+                    start=start,
+                    name=name,
+                    email=email,
+                    tz=tz,
+                    phone=self.state.caller_phone if self.state.caller_phone.startswith("+") else None,
+                    notes=description,
+                    metadata={"source": "phone-intake-agent", "room": self.state.room},
+                )
+            except CalcomError as exc:
+                text = str(exc.body).lower()
+                if exc.status in (400, 409) and any(k in text for k in ("available", "conflict", "busy", "booked")):
+                    self.state.log("book_meeting", result="slot_taken", start=start_iso)
+                    raise ToolError(
+                        "That time was just taken. Call find_open_slots again and offer new options."
+                    ) from exc
+                logger.exception("cal.com booking failed")
+                self.state.log("book_meeting", result="error", error=str(exc)[:300])
+                raise ToolError("Booking failed.") from exc
+            self.state.event_id = booking.get("uid")
+            self.state.event_link = meeting_url(booking)
+        else:
+            if not await calendar.is_free(start, end):
+                self.state.log("book_meeting", result="slot_taken", start=start_iso)
+                raise ToolError("That time was just taken. Call find_open_slots again and offer new options.")
+            try:
+                event = await calendar.create_event(
+                    start=start,
+                    end=end,
+                    summary=f"Intro: {who}",
+                    description=description,
+                    attendee_email=email,
+                )
+            except Exception as exc:
+                logger.exception("events.insert failed")
+                self.state.log("book_meeting", result="error", error=str(exc))
+                raise ToolError("Booking failed.") from exc
+            self.state.event_id = event.get("id")
+            self.state.event_link = meet_link(event)
 
         self.state.outcome = "booked"
-        self.state.event_id = event.get("id")
-        self.state.event_link = meet_link(event)
         self.state.name, self.state.company = name, company
         self.state.log("book_meeting", result="booked", event_id=self.state.event_id)
         local = start.astimezone(tz)
@@ -279,7 +331,11 @@ class IntakeAgent(Agent):
                 f"{local.strftime('%I:%M %p').lstrip('0')} {prompts.spoken_tz(caller_timezone)}"
             ),
             "meet_link": self.state.event_link,
-            "note": "Tell the caller the invite with a video link is on its way to their email, say goodbye, then call end_call.",
+            "note": (
+                "Tell the caller the invite with a video link is on its way to their email. "
+                "Then thank them warmly for calling, say the owner is looking forward to it, wish them "
+                "a good day, and call end_call."
+            ),
         }
 
     @function_tool()

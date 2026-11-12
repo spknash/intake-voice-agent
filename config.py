@@ -72,6 +72,16 @@ class Settings:
     calendar_id: str = "primary"
     token_path: Path = field(default_factory=lambda: Path("token.json"))
     credentials_path: Path = field(default_factory=lambda: Path("credentials.json"))
+    # Booking backend: "calcom" uses the owner's Cal.com event type for availability and
+    # booking; "google" uses the rules above against Google Calendar directly.
+    booking_backend: str = "google"
+    calcom_username: str = ""
+    calcom_event_slug: str = "30min"
+    calcom_api_key: str = ""
+    # Persona
+    voice: str = "marin"  # a GPT-Live built-in name or a custom "voice_..." id
+    voice_style: str = ""  # optional plain-language description, repeated in instructions
+    fun_question: str = ""  # optional icebreaker the agent asks once, answer saved to the booking
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -79,6 +89,12 @@ class Settings:
         mode = e.get("MODE", "live").strip().lower()
         if mode not in {"live", "realtime"}:
             raise ValueError(f"MODE must be 'live' or 'realtime', got {mode!r}")
+        calcom_username = e.get("CALCOM_USERNAME", "").strip()
+        backend = e.get("BOOKING_BACKEND", "calcom" if calcom_username else "google").strip().lower()
+        if backend not in {"calcom", "google"}:
+            raise ValueError(f"BOOKING_BACKEND must be 'calcom' or 'google', got {backend!r}")
+        if backend == "calcom" and not calcom_username:
+            raise ValueError("BOOKING_BACKEND=calcom requires CALCOM_USERNAME")
         return cls(
             owner_name=e.get("OWNER_NAME", "Suhaas"),
             owner_tz=ZoneInfo(e.get("OWNER_TZ", "America/New_York")),
@@ -97,4 +113,11 @@ class Settings:
             calendar_id=e.get("GOOGLE_CALENDAR_ID", "primary"),
             token_path=Path(e.get("GOOGLE_TOKEN_PATH", "token.json")),
             credentials_path=Path(e.get("GOOGLE_CREDENTIALS_PATH", "credentials.json")),
+            booking_backend=backend,
+            calcom_username=calcom_username,
+            calcom_event_slug=e.get("CALCOM_EVENT_SLUG", "30min").strip(),
+            calcom_api_key=e.get("CALCOM_API_KEY", "").strip(),
+            voice=e.get("VOICE", "marin").strip() or "marin",
+            voice_style=e.get("VOICE_STYLE", "").strip(),
+            fun_question=e.get("FUN_QUESTION", "").strip(),
         )
