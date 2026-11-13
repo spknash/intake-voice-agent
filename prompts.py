@@ -70,10 +70,11 @@ def backend_instructions(settings: Settings, today: datetime, caller_phone: str)
     n = 4 if settings.fun_question else 3
     if settings.contact_mode == "phone":
         email_step = (
-            f"{n + 1}. Do NOT ask for an email. The confirmation is texted to the number they are calling from. "
-            "If the caller volunteers an email and wants it emailed too, call confirm_email, read the spelled value back, get a yes, and pass it to book_meeting.\n"
+            f"{n + 1}. Do NOT ask for an email. Instead ask once: \"I'll text the confirmation with the meeting link to the number you're calling from. Is that okay?\" "
+            "Book only after a yes. If they would rather not be texted, ask for an email instead: call confirm_email, read the spelled value back, get a yes, and pass it to book_meeting. "
+            "If the caller volunteers an email and wants it emailed too, do the same and pass both.\n"
         )
-        confirm_line = "Tell them a text with the meeting link is on its way to the number they called from."
+        confirm_line = "Tell them the confirmation text with the meeting link is on its way to the number they called from, and that they can reply STOP to opt out of texts."
         email_rule = "Never ask for an email unless book_meeting's error message tells you to."
     else:
         email_step = (

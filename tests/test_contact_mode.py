@@ -17,6 +17,7 @@ def test_phone_mode_prompt_never_asks_email():
     s = Settings.from_env({"CONTACT_MODE": "phone", "CALCOM_USERNAME": "u"})
     text = backend_instructions(s, datetime(2026, 11, 12, tzinfo=s.owner_tz), "+1")
     assert "Do NOT ask for an email" in text
+    assert "Is that okay?" in text
     assert "text with the meeting link" in text
 
 

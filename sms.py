@@ -32,6 +32,7 @@ class Confirmation:
             lines.append(f"Join: {self.meet_link}")
         if self.manage_link:
             lines.append(f"Change or cancel: {self.manage_link}")
+        lines.append("Reply STOP to opt out.")
         return "\n".join(lines)
 
 

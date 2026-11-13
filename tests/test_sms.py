@@ -7,9 +7,10 @@ def test_confirmation_text():
     assert c.text() == (
         "Booked: Friday November 13 at 3:00 PM Eastern with Suhaas.\n"
         "Join: https://meet.google.com/abc\n"
-        "Change or cancel: https://cal.com/booking/u1"
+        "Change or cancel: https://cal.com/booking/u1\n"
+        "Reply STOP to opt out."
     )
-    assert Confirmation("S", "x", None, None).text() == "Booked: x with S."
+    assert Confirmation("S", "x", None, None).text() == "Booked: x with S.\nReply STOP to opt out."
 
 
 def test_twilio_enabled_requires_all_settings():
