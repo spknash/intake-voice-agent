@@ -82,6 +82,11 @@ class Settings:
     # call. "phone": never ask for email; book with the caller's number and rely on an SMS
     # confirmation (a Cal.com workflow or another sender) to that number.
     contact_mode: str = "email"
+    # Twilio, for texting confirmations in phone mode
+    twilio_account_sid: str = ""
+    twilio_api_key_sid: str = ""
+    twilio_api_key_secret: str = ""
+    sms_from: str = ""  # E.164 Twilio number that sends the texts
     # Persona
     voice: str = "marin"  # a GPT-Live built-in name or a custom "voice_..." id
     voice_style: str = ""  # optional plain-language description, repeated in instructions
@@ -125,6 +130,10 @@ class Settings:
             calcom_event_slug=e.get("CALCOM_EVENT_SLUG", "30min").strip(),
             calcom_api_key=e.get("CALCOM_API_KEY", "").strip(),
             contact_mode=contact_mode,
+            twilio_account_sid=e.get("TWILIO_ACCOUNT_SID", "").strip(),
+            twilio_api_key_sid=e.get("TWILIO_API_KEY_SID", "").strip(),
+            twilio_api_key_secret=e.get("TWILIO_API_KEY_SECRET", "").strip(),
+            sms_from=normalize_phone(e.get("SMS_FROM", "")) if e.get("SMS_FROM", "").strip() else "",
             voice=e.get("VOICE", "marin").strip() or "marin",
             voice_style=e.get("VOICE_STYLE", "").strip(),
             fun_question=e.get("FUN_QUESTION", "").strip(),

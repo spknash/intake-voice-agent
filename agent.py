@@ -37,6 +37,7 @@ from calcom import Calcom, CalcomError, meeting_url, select_slots
 from config import Settings, normalize_phone
 from emailcheck import check_email
 from gcal import Calendar, generate_slots, meet_link
+from sms import Confirmation, SmsError, Twilio
 
 load_dotenv()
 logger = logging.getLogger("intake")
@@ -44,6 +45,7 @@ logger = logging.getLogger("intake")
 settings = Settings.from_env()
 calendar = Calendar(settings)
 calcom = Calcom(settings) if settings.booking_backend == "calcom" else None
+twilio = Twilio(settings)
 
 def prewarm(proc: JobProcess) -> None:
     """Runs once per worker process before any job, off the event loop.
@@ -332,22 +334,42 @@ class IntakeAgent(Agent):
         self.state.name, self.state.company = name, company
         self.state.log("book_meeting", result="booked", event_id=self.state.event_id)
         local = start.astimezone(tz)
+        when = (
+            f"{local.strftime('%A %B')} {local.day} at "
+            f"{local.strftime('%I:%M %p').lstrip('0')} {prompts.spoken_tz(caller_timezone)}"
+        )
+
+        sms_sent = False
+        if has_phone and twilio.enabled and (settings.contact_mode == "phone" or not email):
+            manage = f"https://cal.com/booking/{self.state.event_id}" if calcom is not None else None
+            body = Confirmation(settings.owner_name, when, self.state.event_link, manage).text()
+            try:
+                await twilio.send(self.state.caller_phone, body)
+                sms_sent = True
+                self.state.log("sms", result="sent", to=self.state.caller_phone)
+            except SmsError as exc:
+                logger.warning("confirmation SMS failed: %s", exc)
+                self.state.log("sms", result="error", error=str(exc)[:200])
+
+        if sms_sent and email:
+            how = "Tell the caller a text with the meeting link is on its way, and the email invite too. "
+        elif sms_sent:
+            how = "Tell the caller a text with the meeting link is on its way to the number they called from. "
+        elif email:
+            how = "Tell the caller the invite with a video link is on its way to their email. "
+        else:
+            how = (
+                "The booking is made but no confirmation could be sent. Tell the caller the time once "
+                "more and that the owner will send details. "
+            )
         return {
             "booked": True,
-            "when": (
-                f"{local.strftime('%A %B')} {local.day} at "
-                f"{local.strftime('%I:%M %p').lstrip('0')} {prompts.spoken_tz(caller_timezone)}"
-            ),
+            "when": when,
             "meet_link": self.state.event_link,
-            "note": (
-                (
-                    "Tell the caller a text with the meeting link is on its way to the number they called from. "
-                    if not email
-                    else "Tell the caller the invite with a video link is on its way to their email. "
-                )
-                + "Then thank them warmly for calling, say the owner is looking forward to it, wish them "
-                "a good day, and call end_call."
-            ),
+            "sms_sent": sms_sent,
+            "note": how
+            + "Then thank them warmly for calling, say the owner is looking forward to it, wish them "
+            "a good day, and call end_call.",
         }
 
     @function_tool()
